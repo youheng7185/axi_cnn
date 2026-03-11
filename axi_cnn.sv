@@ -90,6 +90,8 @@ module	axi_cnn #(
 
     integer widx, ridx;
 
+    reg inference_done;
+
 	////////////////////////////////////////////////////////////////////////
 	//
 	// Register/wire signal declarations
@@ -288,7 +290,7 @@ module	axi_cnn #(
         axil_read_data <= 0;
 
         if (arskd_addr == ADDR_STATUS)
-            axil_read_data <= {31'b0, output_valid_o};
+            axil_read_data <= {31'b0, inference_done};
         
         else if (arskd_addr == ADDR_CONFIG)
             axil_read_data <= reg_config;
@@ -338,5 +340,14 @@ module	axi_cnn #(
         .data_out(data_out),
         .valid_out(output_valid_o)
     );
+
+    always @(posedge S_AXI_ACLK) begin
+        if (i_reset)
+            inference_done <= 0;
+        else if (start_i)          // auto-clear when new inference starts
+            inference_done <= 0;
+        else if (output_valid_o)   // latch the pulse high
+            inference_done <= 1;
+    end
 
 endmodule

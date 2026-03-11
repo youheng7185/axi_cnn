@@ -256,6 +256,18 @@ module cnn_controller (
                     if (fc_output_valid[0]) begin
                         state <= CNN_CONTROLLER_IDLE;
                         valid_out <= 1'b1;
+                        $display("inference done, jump back to idle");
+                        $display("input data 0: %d", data_in[0]);
+                        $display("input data 1: %d", data_in[1]);
+                        $display("input data 2: %d", data_in[2]);
+
+                        $display("conv out 0: %d", conv_output_flattened[0]);
+                        $display("conv out 10: %d", conv_output_flattened[10]);
+
+                        $display("output data 0: %d", data_out[0]);
+                        $display("output data 1: %d", data_out[1]);
+                        $display("output data 2: %d", data_out[2]);
+                        $display("output data 3: %d", data_out[3]);                        
                     end
                 end
                 default: 
