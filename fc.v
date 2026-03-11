@@ -122,7 +122,8 @@ module fc #(
                 end
 
                 SET_DATA: begin
-                    mac_data_in <= input_data[i % LEN] + 128;
+                    //mac_data_in <= input_data[i % LEN] + 128;
+                    mac_data_in <= $signed({{1{input_data[i % LEN][7]}}, input_data[i % LEN]}) + 9'sd128;
                     mac_enable <= 1'b1;
                 end
 

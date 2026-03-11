@@ -76,7 +76,9 @@ module prepare_conv_output (
     reg signed [63:0] _rounded_val;
 
     always @(*) begin
-    _debug_val = (data_in + bias) * scale;
+    //_debug_val = (data_in + bias) * scale;
+    _debug_val = $signed({{32{data_in[31]}}, data_in}) + $signed({{32{bias[31]}}, bias});
+    _debug_val = _debug_val * $signed({{32{scale[31]}}, scale});        
     
     // Correct rounding: add 2^30 with sign consideration, then shift right by 31
     if (_debug_val[63]) begin 
@@ -154,10 +156,12 @@ module prepare_fc_output (
     assign bias = FC_BIAS[class_num];
     
     always @(*) begin
-        acc_with_bias = data_in + bias;
+        // acc_with_bias = data_in + bias;
+        acc_with_bias = $signed({{32{data_in[31]}}, data_in}) + $signed({{32{bias[31]}}, bias});
         
-        multiplied = acc_with_bias * reduced_multiplier;
-        
+        //multiplied = acc_with_bias * reduced_multiplier;
+        multiplied = acc_with_bias * $signed({{32{reduced_multiplier[31]}}, reduced_multiplier});
+
         with_rounding = multiplied + (64'sd1 << (total_shift - 1));
         
         shifted_result = with_rounding >>> total_shift;
@@ -179,6 +183,14 @@ module prepare_fc_output (
             // $display("acc = %0d", data_in);
             // $display("bias = %0d", bias);
             // $display("acc_with_bias = %0d", acc_with_bias);
+
+            $display("FC class%0d: data_in=%0d bias=%0d acc_with_bias=%0d", 
+                    class_num, data_in, bias, acc_with_bias);
+            $display("FC class%0d: reduced_mult=%0d multiplied=%0d",
+                    class_num, reduced_multiplier, multiplied);
+            $display("FC class%0d: with_rounding=%0d shifted=%0d quantized=%0d with_offset=%0d",
+                    class_num, with_rounding, shifted_result, quantized_result, with_offset);
+
         end else begin
             quant_data_out = 0;
         end
