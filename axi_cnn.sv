@@ -47,7 +47,7 @@ module	axi_cnn #(
 		// Size of the AXI-lite bus.  These are fixed, since 1) AXI-lite
 		// is fixed at a width of 32-bits by Xilinx def'n, and 2) since
 		// we only ever have 4 configuration words.
-		parameter	C_AXI_ADDR_WIDTH = 4,
+		parameter	C_AXI_ADDR_WIDTH = 12,
 		localparam	C_AXI_DATA_WIDTH = 32,
         parameter [0:0]	OPT_LOWPOWER = 0
 		// }}}
@@ -80,10 +80,15 @@ module	axi_cnn #(
 		output	wire	[C_AXI_DATA_WIDTH-1:0]		S_AXI_RDATA,
 		output	wire	[1:0]				S_AXI_RRESP,
 		// }}}
-
-        input wire [15:0] gpio_in,
-        output wire [15:0] gpio_out
 	);
+
+    logic start_i;
+    logic output_valid_o;
+
+    logic signed [7:0] data_in [0:1959];
+    logic signed [7:0] data_out [0:3];
+
+    integer widx, ridx;
 
 	////////////////////////////////////////////////////////////////////////
 	//
@@ -92,6 +97,11 @@ module	axi_cnn #(
 	////////////////////////////////////////////////////////////////////////
 	//
 	localparam	ADDRLSB = 2; // last two least significant bit not used
+    localparam ADDR_STATUS  = (12'h000 >> ADDRLSB);  // 0x000
+    localparam ADDR_CONFIG  = (12'h004 >> ADDRLSB);  // 0x004
+    localparam ADDR_DATA_IN = (12'h008 >> ADDRLSB);  // 0x008, 490 words
+    localparam ADDR_DATA_OUT= (12'h7D8 >> ADDRLSB);  // 0x7D8
+    localparam DATA_IN_WORDS = 490;
 
 	wire	i_reset = !S_AXI_ARESETN;
 
@@ -107,8 +117,6 @@ module	axi_cnn #(
 	reg	[C_AXI_DATA_WIDTH-1:0]	axil_read_data;
 	reg				axil_read_valid;
 
-	reg	[31:0]	r0, r1, r2, r3;
-	wire	[31:0]	wskd_r0, wskd_r1, wskd_r2, wskd_r3;
 	// }}}
 	////////////////////////////////////////////////////////////////////////
 	//
@@ -240,44 +248,59 @@ module	axi_cnn #(
 	// {{{
 
 	// apply_wstrb(old_data, new_data, write_strobes)
-	assign	wskd_r0 = apply_wstrb(r0, wskd_data, wskd_strb);
-	assign	wskd_r1 = apply_wstrb(r1, wskd_data, wskd_strb);
-	assign	wskd_r2 = apply_wstrb(r2, wskd_data, wskd_strb);
-	assign	wskd_r3 = apply_wstrb(r3, wskd_data, wskd_strb);
 
-	initial	r0 = 0;
-	initial	r1 = 0;
-	initial	r2 = 0;
-	initial	r3 = 0;
+    reg [31:0] reg_config;
+
 	always @(posedge S_AXI_ACLK)
 	if (i_reset)
 	begin
-		r0 <= 0;
-		r1 <= 0;
-		r2 <= 0;
-		r3 <= 0;
-	end else if (axil_write_ready)
+        reg_config <= 0;
+    end else if (axil_write_ready)
 	begin
-		case(awskd_addr)
-		2'b00:	r0 <= wskd_r0;
-		2'b01:	r1 <= wskd_r1;
-		2'b10:	r2 <= wskd_r2;
-		2'b11:	r3 <= wskd_r3;
-		endcase
+        if (awskd_addr == ADDR_CONFIG)     begin
+            reg_config <= apply_wstrb(reg_config , wskd_data, wskd_strb);
+        end
+
+        if (awskd_addr >= ADDR_DATA_IN && awskd_addr < ADDR_DATA_IN + DATA_IN_WORDS) begin
+            widx = awskd_addr - ADDR_DATA_IN;
+            // pack 4 bytes per word
+            if (wskd_strb[0]) data_in[widx*4+0] <= wskd_data[ 7: 0];
+            if (wskd_strb[1]) data_in[widx*4+1] <= wskd_data[15: 8];
+            if (wskd_strb[2]) data_in[widx*4+2] <= wskd_data[23:16];
+            if (wskd_strb[3]) data_in[widx*4+3] <= wskd_data[31:24];
+        end
 	end
 
-	initial	axil_read_data = 0;
+    // generate start_i pulse
+    always @(posedge S_AXI_ACLK) begin
+        if (i_reset)
+            start_i <= 0;
+        else if (axil_write_ready && awskd_addr == ADDR_CONFIG)
+            start_i <= wskd_data[0] & wskd_strb[0];
+        else
+            start_i <= 0;
+    end
+
 	always @(posedge S_AXI_ACLK)
 	if (OPT_LOWPOWER && !S_AXI_ARESETN)
 		axil_read_data <= 0;
-	else if (!S_AXI_RVALID || S_AXI_RREADY)
-	begin
-		case(arskd_addr)
-		2'b00:	axil_read_data	<= {16'b0, gpio_in};
-		2'b01:	axil_read_data	<= r1;
-		2'b10:	axil_read_data	<= r2;
-		2'b11:	axil_read_data	<= r3;
-		endcase
+	else if (!S_AXI_RVALID || S_AXI_RREADY) begin
+        axil_read_data <= 0;
+
+        if (arskd_addr == ADDR_STATUS)
+            axil_read_data <= {31'b0, output_valid_o};
+        
+        else if (arskd_addr == ADDR_CONFIG)
+            axil_read_data <= reg_config;
+
+        else if (arskd_addr >= ADDR_DATA_IN && arskd_addr < ADDR_DATA_IN + DATA_IN_WORDS) begin
+            ridx = arskd_addr - ADDR_DATA_IN;
+            axil_read_data <= { data_in[ridx*4+3], data_in[ridx*4+2],
+                            data_in[ridx*4+1], data_in[ridx*4+0] };
+        end
+
+        else if (arskd_addr == ADDR_DATA_OUT)
+            axil_read_data <= {data_out[3], data_out[2], data_out[1], data_out[0]};
 
 		if (OPT_LOWPOWER && !axil_read_ready)
 			axil_read_data <= 0;
@@ -306,12 +329,6 @@ module	axi_cnn #(
 			S_AXI_AWADDR[ADDRLSB-1:0] };
 	// Verilator lint_on  UNUSED
 	// }}}
-
-    logic start_i;
-    logic output_valid_o;
-
-    logic signed [7:0] data_in [0:1959];
-    logic signed [7:0] data_out [0:3];
 
     cnn_controller cnn_inst (
         .clk(S_AXI_ACLK),
